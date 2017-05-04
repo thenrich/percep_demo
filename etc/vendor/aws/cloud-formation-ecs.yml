@@ -1,0 +1,476 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Demo
+Parameters:
+  InstanceType:
+    Type: String
+    Default: t2.small
+    AllowedValues: [t2.micro, t2.small, t2.medium, t2.large, m3.medium, m3.large,
+      m3.xlarge, m3.2xlarge, m4.large, m4.xlarge, m4.2xlarge, m4.4xlarge, m4.10xlarge,
+      c4.large, c4.xlarge, c4.2xlarge, c4.4xlarge, c4.8xlarge, c3.large, c3.xlarge,
+      c3.2xlarge, c3.4xlarge, c3.8xlarge, r3.large, r3.xlarge, r3.2xlarge, r3.4xlarge,
+      r3.8xlarge, i2.xlarge, i2.2xlarge, i2.4xlarge, i2.8xlarge]
+    Description: Enter instance type, defaults to t2.small
+  KeyPair:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Enter the SSH keypair to use when launching instances
+  EnvironmentConfigName:
+    Type: String
+    Description: Environment config name. There must be a matching environment config file in S3.
+    AllowedPattern: "dev|qa|prod"
+  Tag:
+    Type: String
+    Description: Tag for environment
+    AllowedPattern: '[A-za-z0-9\-]+'
+  AccountId:
+    Type: String
+    Description: AWS Account Id
+    AllowedPattern: '[A-za-z0-9\-]+'
+  Region:
+    Type: String
+    Description: Target region
+Mappings:
+  AWSRegionToAMI:
+    us-east-1:
+      AMIID: ami-eca289fb
+    us-east-2:
+      AMIID: ami-446f3521
+    us-west-1:
+      AMIID: ami-9fadf8ff
+    us-west-2:
+      AMIID: ami-7abc111a
+    eu-west-1:
+      AMIID: ami-a1491ad2
+    eu-central-1:
+      AMIID: ami-54f5303b
+    ap-northeast-1:
+      AMIID: ami-9cd57ffd
+    ap-southeast-1:
+      AMIID: ami-a900a3ca
+    ap-southeast-2:
+      AMIID: ami-5781be34
+Resources:
+  PerceptyxECSEC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - "ec2.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      ManagedPolicyArns: [
+        "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role",
+        "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+      ]
+      Path: "/"
+      RoleName: ecsInstanceRole
+
+  PerceptyxECSAutoscaleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - "application-autoscaling.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      ManagedPolicyArns: ["arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceAutoscaleRole"]
+      Path: "/"
+      RoleName: ecsAutoscaleRole
+
+  PerceptyxECSEC2ServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - "ecs.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      ManagedPolicyArns: ["arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceRole"]
+      Path: "/"
+      RoleName: ecsServiceRole
+  PerceptyxECSEC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    DependsOn: "PerceptyxECSEC2Role"
+    Properties:
+      Path: "/"
+      Roles:
+      - !Ref 'PerceptyxECSEC2Role'
+  PerceptyxVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: false
+      InstanceTenancy: default
+      Tags:
+      - Key: Name
+        Value: !Sub "Perceptyx ${Tag} VPC"
+  PerceptyxPublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: us-east-1b
+      CidrBlock: 10.0.0.0/24
+      MapPublicIpOnLaunch: true
+      VpcId:
+        Ref: PerceptyxVPC
+  PerceptyxPrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: us-east-1b
+      CidrBlock: 10.0.1.0/24
+      VpcId:
+        Ref: PerceptyxVPC
+  PerceptyxPublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: us-east-1d
+      CidrBlock: 10.0.3.0/24
+      MapPublicIpOnLaunch: true
+      VpcId:
+        Ref: PerceptyxVPC
+  PerceptyxPrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: us-east-1b
+      CidrBlock: 10.0.2.0/24
+      VpcId:
+        Ref: PerceptyxVPC
+  PerceptyxInternetGateway:
+    Type: AWS::EC2::InternetGateway
+  PerceptyxRoutingTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: PerceptyxVPC
+  PerceptyxInternetGatewayRoute:
+    Type: AWS::EC2::Route
+    DependsOn: "PerceptyxInternetGatewayAttachment"
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: PerceptyxInternetGateway
+      RouteTableId:
+        Ref: PerceptyxRoutingTable
+  PerceptyxInternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId:
+        Ref: PerceptyxInternetGateway
+      VpcId:
+        Ref: PerceptyxVPC
+  PerceptyxPublicSubnetRouteAttachment1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: PerceptyxRoutingTable
+      SubnetId:
+        Ref: PerceptyxPublicSubnet1
+  PerceptyxPublicSubnetRouteAttachment2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: PerceptyxRoutingTable
+      SubnetId:
+        Ref: PerceptyxPublicSubnet2
+
+  PerceptyxECSVPCSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref 'PerceptyxVPC'
+      GroupDescription: Allow all traffic inside VPC
+
+  PerceptyxECSVPCSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref 'PerceptyxECSVPCSecurityGroup'
+      IpProtocol: 'tcp'
+      FromPort: 0
+      ToPort: 65535
+      SourceSecurityGroupId: !Ref 'PerceptyxECSVPCSecurityGroup'
+
+  PerceptyxECSPublicSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref 'PerceptyxVPC'
+      GroupDescription: Allow dynamic port range from load balancer, 22 from the outside
+      SecurityGroupIngress:
+        - IpProtocol: 'tcp'
+          # Dynamic port range for ECS services
+          FromPort: 32768
+          ToPort: 61000
+          SourceSecurityGroupId: !Ref 'PerceptyxALBSecurityGroup'
+        - IpProtocol: 'tcp'
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+  PerceptyxALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref 'PerceptyxVPC'
+      GroupDescription: Allow external port 80 to load balancer
+      SecurityGroupIngress:
+        - IpProtocol: 'tcp'
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  PerceptyxECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub
+      - Perceptyx-ecs-cluster-${Tag}
+      - { Tag: !Ref 'Tag' }
+
+
+  PerceptyxECSServiceWeb:
+    Type: AWS::ECS::Service
+    DependsOn: ['PerceptyxECSEC2ServiceRole', 'PerceptyxECSClusterASG', 'PerceptyxALBTargetGroup', 'PerceptyxALBListenerHTTP', 'PerceptyxECSTaskDefinitionWeb']
+    Properties:
+      Cluster: !Ref 'PerceptyxECSCluster'
+      DesiredCount: 1
+      TaskDefinition: !Ref 'PerceptyxECSTaskDefinitionWeb'
+      Role: !Ref 'PerceptyxECSEC2ServiceRole'
+      LoadBalancers:
+        -
+          TargetGroupArn: !Ref 'PerceptyxALBTargetGroup'
+          ContainerName: nginx
+          ContainerPort: 80
+
+  PerceptyxEnvCfgTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      ContainerDefinitions:
+        -
+          Name: env-cfg
+          Image: !Sub ${AccountId}.dkr.ecr.${Region}.amazonaws.com/perceptyx/perceptyx-env-cfg:latest
+          MemoryReservation: 64
+          # Add writable mount point for app_config
+          MountPoints:
+            -
+              SourceVolume: app-config
+              ContainerPath: /etc/app_config
+          Command:
+            - /run.sh
+      Family: !Sub EnvCfg-${Tag}
+      Volumes:
+        -
+          Host:
+            SourcePath: /etc/app_config
+          Name: app-config
+
+  PerceptyxECSTaskDefinitionWeb:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      ContainerDefinitions:
+        -
+          Name: web
+          Image: !Sub ${AccountId}.dkr.ecr.${Region}.amazonaws.com/perceptyx/perceptyx-web:latest
+          MemoryReservation: 512
+          MountPoints:
+            -
+              SourceVolume: ecs-logs-web
+              ContainerPath: /var/log/web
+            -
+              SourceVolume: app-config
+              ContainerPath: /etc/app_config
+              ReadOnly: true
+          Command:
+            - /run.sh
+
+        -
+          Name: nginx
+          Links:
+            - web
+          Image: !Sub ${AccountId}.dkr.ecr.${Region}.amazonaws.com/perceptyx/perceptyx-nginx:latest
+          MemoryReservation: 128
+          PortMappings:
+            - ContainerPort: 80
+              # Skip HostPort here since we're doing dynamic port mapping
+          MountPoints:
+            -
+              SourceVolume: ecs-logs-nginx
+              ContainerPath: /var/log/nginx
+            -
+              SourceVolume: app-config
+              ContainerPath: /etc/app_config
+              ReadOnly: true
+          Command:
+            - /run.sh
+
+      Family: !Sub Web-${Tag}
+      Volumes:
+        -
+          Host:
+            SourcePath: /etc/app_config
+          Name: app-config
+        -
+          Host:
+            SourcePath: /var/log/web
+          Name: ecs-logs-web
+        -
+          Host:
+            SourcePath: /var/log/nginx
+          Name: ecs-logs-nginx
+
+# Now that we've defined the ECS cluster, we need to launch ECS instances to
+# run it
+  PerceptyxECSClusterASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier: [ !Ref 'PerceptyxPublicSubnet1', !Ref 'PerceptyxPublicSubnet2' ]
+      MaxSize: 1
+      MinSize: 1
+      LaunchConfigurationName: !Ref 'PerceptyxECSClusterLaunchConfiguration'
+
+# Temporarily stop attaching all autoscaling instances to the load balancer to allow
+# the PerceptyxECSServiceWeb to scale itself
+#      TargetGroupARNs: [ !Ref 'PerceptyxALBTargetGroup' ]
+
+  PerceptyxECSClusterLaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId: !FindInMap [AWSRegionToAMI, !Ref 'AWS::Region', AMIID]
+      SecurityGroups: [ !Ref 'PerceptyxECSPublicSecurityGroup' , !Ref 'PerceptyxECSVPCSecurityGroup' ]
+      InstanceType: !Ref 'InstanceType'
+      IamInstanceProfile: !Ref 'PerceptyxECSEC2InstanceProfile'
+      KeyName: !Ref 'KeyPair'
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            Content-Type: multipart/mixed; boundary="==BOUNDARY=="
+            MIME-Version: 1.0
+
+            --==BOUNDARY==
+            MIME-Version: 1.0
+            Content-Type: text/text/x-shellscript; charset="us-ascii"
+
+            #!/bin/bash
+            # Specify the cluster that the container instance should register into
+            cluster=${PerceptyxECSCluster}
+
+            # Install the AWS CLI and the jq JSON parser
+            yum install -y aws-cli jq
+
+            # Write the cluster configuration variable to the ecs.config file
+            # (add any other configuration variables here also)
+            mkdir /etc/app_config
+            # Fetch dockercfg from S3 and configure ecs.config
+            aws s3 cp s3://com.perceptypx.docker.config/dockercfg /etc/dockercfg
+            aws s3 cp s3://com.perceptypx.docker.config/environ-${EnvironmentConfigName} /etc/app_config/environment
+            echo ECS_CLUSTER=$cluster >> /etc/ecs/ecs.config
+            echo ECS_ENGINE_AUTH_TYPE=dockercfg >> /etc/ecs/ecs.config
+            echo ECS_ENGINE_AUTH_DATA=$(cat /etc/dockercfg) >> /etc/ecs/ecs.config
+
+            --==BOUNDARY==
+            MIME-Version: 1.0
+            Content-Type: text/text/upstart-job; charset="us-ascii"
+
+            #upstart-job
+            description "Amazon EC2 Container Service (start task on instance boot)"
+            author "Amazon Web Services"
+            start on started ecs
+
+            script
+                exec 2>>/var/log/ecs/ecs-start-task.log
+                set -x
+                until curl -s http://localhost:51678/v1/metadata
+                do
+                    sleep 1
+                done
+
+                # Grab the container instance ARN and AWS region from instance metadata
+                instance_arn=${InstanceArn}
+                cluster=${Cluster}
+                region=${Region}
+
+                # Specify the task definition to run at launch
+                task_definition=${EnvCfgTaskDef}
+
+                # Run the AWS CLI start-task command to start your task on this container instance
+                aws ecs start-task --cluster $cluster --task-definition $task_definition --container-instances $instance_arn --started-by $instance_arn --region $region
+            end script
+            --==BOUNDARY==--
+
+
+          - { EnvCfgTaskDef: !Ref PerceptyxEnvCfgTaskDefinition, Cluster: "$(curl -s http://localhost:51678/v1/metadata | jq -r '. | .Cluster' | awk -F/ '{print $NF}' )", InstanceArn: "$(curl -s http://localhost:51678/v1/metadata | jq -r '. | .ContainerInstanceArn' | awk -F/ '{print $NF}' )", Region: "$(curl -s http://localhost:51678/v1/metadata | jq -r '. | .ContainerInstanceArn' | awk -F: '{print $4}')" }
+
+# Create an application loadbalancer for PerceptyxECSServiceWeb
+  PerceptyxALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      Subnets: [ !Ref 'PerceptyxPublicSubnet1', !Ref 'PerceptyxPublicSubnet2' ]
+      SecurityGroups: [ !Ref 'PerceptyxALBSecurityGroup' ]
+
+  PerceptyxALBListenerHTTP:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: !Ref 'PerceptyxALBTargetGroup'
+      LoadBalancerArn: !Ref 'PerceptyxALB'
+      Port: 80
+      Protocol: HTTP
+
+  PerceptyxALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      # Port is required here, but when tasks register with the TargetGroup
+      # they can override this, which is what should be happening when we
+      # don't set HostPort in the ContainerDefinition and allow the service
+      # to register with the ELB -> TargetGroup
+      HealthCheckPath: /check.html
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref 'PerceptyxVPC'
+
+
+# Autoscale the PerceptyxECSServiceWeb service
+  PerceptyxServiceWebAASTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity: 1
+      MinCapacity: 1
+      ResourceId: !Sub
+        - service/${ClusterName}/${ServiceName}
+        - { ClusterName: !Sub "Perceptyx-ecs-cluster-${Tag}", ServiceName: !GetAtt PerceptyxECSServiceWeb.Name }
+      RoleARN: arn:aws:iam::${AccountId}:role/ecsAutoscaleRole
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+
+  PerceptyxServiceWebAASPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    DependsOn: 'PerceptyxServiceWebAASTarget'
+    Properties:
+      PolicyName: Perceptyx-service-web-scaling-policy
+      PolicyType: StepScaling
+      ResourceId: !Sub
+        - service/${ClusterName}/${ServiceName}
+        - { ClusterName: !Sub "Perceptyx-ecs-cluster-${Tag}", ServiceName: !GetAtt PerceptyxECSServiceWeb.Name }
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+      StepScalingPolicyConfiguration:
+        AdjustmentType: ExactCapacity
+        Cooldown: 300
+        StepAdjustments:
+          - MetricIntervalLowerBound: 1
+            ScalingAdjustment: 1
+
+
+Outputs: {}

@@ -1,9 +1,13 @@
 # Prefix to make clean up easier
 prefix = perceptyx
 curdir = $(shell pwd)
+repo_prefix = ${AWSAccountId}.dkr.ecr.${AWSRegion}.amazonaws.com
 
 build-go-builder:
-	docker build -t $(prefix)-go-build etc/dockerfiles/go
+	docker build -t $(prefix)-go-build $(curdir)/etc/dockerfiles/go
+
+prepare-build-context:
+	for dir in $(shell ls $(curdir)/etc/dockerfiles); do cp ${curdir}/etc/dockerfiles/common.sh ${dir}/common.sh; done
 
 # Launch the go-build image with the web directory mounted at /app,
 # fetch Go dependencies, and install the binary
@@ -14,16 +18,17 @@ build-web: build-go-builder
 		-v $(curdir)/web:/app \
 		-w /app \
 		$(prefix)-go-build bash -c "go get -d ./... && go install github.com/thenrich/perceptyx_test"
-	mkdir $(curdir)/etc/dockerfiles/web/bin || true
 	chmod +x $(curdir)/web/bin/*
-	cp $(curdir)/web/bin/* $(curdir)/etc/dockerfiles/web/bin
-	docker build -t $(prefix)-web $(curdir)/etc/dockerfiles/web
+	docker build -t $(prefix)-web -f $(curdir)/etc/dockerfiles/web/Dockerfile .
 
 build-nginx:
-	docker build -t $(prefix)-nginx $(curdir)/etc/dockerfiles/nginx
+	docker build -t $(prefix)-nginx -f $(curdir)/etc/dockerfiles/nginx/Dockerfile .
 
 build-mysql:
-	docker build -t $(prefix)-mysql $(curdir)/etc/dockerfiles/mysql
+	docker build -t $(prefix)-mysql -f $(curdir)/etc/dockerfiles/mysql/Dockerfile .
+
+build-env-cfg:
+	docker build -t $(prefix)-env-cfg -f $(curdir)/etc/dockerfiles/env-cfg/Dockerfile
 
 start-mysql:
 	docker run -d --name $(prefix)-mysql -e MYSQL_ROOT_PASSWORD=demodemo $(prefix)-mysql 
@@ -43,7 +48,25 @@ start-nginx:
 stop-nginx:
 	docker rm -f $(prefix)-nginx
 
+push-web: 
+	docker tag $(prefix)-web $(repo_prefix)/$(prefix)/$(prefix)-web:latest
+	docker push $(repo_prefix)/$(prefix)/$(prefix)-web:latest
+
+push-nginx:
+	docker tag $(prefix)-nginx $(repo_prefix)/$(prefix)/$(prefix)-nginx:latest
+	docker push $(repo_prefix)/$(prefix)/$(prefix)-nginx:latest
+
+push-mysql:
+	docker tag $(prefix)-mysql $(repo_prefix)/$(prefix)/$(prefix)-mysql:latest
+	docker push $(repo_prefix)/$(prefix)/$(prefix)-mysql:latest
+
+push-env-cfg:
+	docker tag $(prefix)-env-cfg $(repo_prefix)/$(prefix)/$(prefix)-env-cfg:latest
+	docker push $(repo_prefix)/$(prefix)/$(prefix)-env-cfg:latest
+
 build-all: build-web build-nginx build-mysql
+
+push-all: push-web push-nginx push-mysql push-env-cfg
 
 start-all: start-mysql start-web start-nginx
 

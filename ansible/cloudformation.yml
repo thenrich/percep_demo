@@ -1,0 +1,23 @@
+---
+
+- name: stack
+  hosts: localhost
+  connection: local
+  gather_facts: False
+
+  tasks:
+
+    - name: ecs cluster
+      cloudformation:
+        stack_name: "perceptyx-demo"
+        state: "present"
+        region: "us-east-1"
+        disable_rollback: false
+        template: "../etc/vendor/aws/cloud-formation-ecs.yml"
+        template_parameters:
+          Region: "us-east-1"
+          KeyPair: "perceptyx-keypair"
+          EnvironmentConfigName: "dev"
+          InstanceType: "t2.small"
+          Tag: "dev"
+          AccountId: "625909117766"

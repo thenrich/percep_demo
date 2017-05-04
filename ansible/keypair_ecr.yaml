@@ -1,0 +1,25 @@
+---
+
+- name: keys ecr
+  hosts: localhost
+  connection: local
+  gather_facts: False
+
+  tasks:
+    - name: ec2 key
+      ec2_key:
+        name: perceptyx-keypair 
+        region: us-east-1
+      with_file: perceptyx_rsa.pub
+
+    - name: ecr repo web
+      ecs_ecr: name=perceptyx/perceptyx-web
+
+    - name: ecr repo nginx
+      ecs_ecr: name=perceptyx/perceptyx-nginx
+
+    - name: ecr repo mysql
+      ecs_ecr: name=perceptyx/perceptyx-mysql
+
+    - name: ecr repo env-cfg
+      ecs_ecr: name=perceptyx/perceptyx-env-cfg
