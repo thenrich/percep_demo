@@ -23,7 +23,7 @@ This project uses a combination of Ansible and CloudFormation to provision the A
 
 1. In the root of the repository, run `make build-all` to build the Docker images. This step downloads and builds the images for MySQL, NGiNX, and the Go toolchain. Afterwards, the Go source is compiled and baked into the web container.
 
-2. To run locally, execute `make start-all` to start the NGiNX, web, and MySQL containers. Browse to http://localhost:8080 after giving some time for the MySQL import to complete (~30 seconds) and the results of the query should display.
+2. To run locally, execute `make start-all` to start the NGiNX, web, and MySQL containers. Browse to http://localhost:8080 after giving some time for the MySQL import to complete (~30 seconds) and the results of the query should display. (Tested on macOS)
 
 ## Deploying to AWS
 
