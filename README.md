@@ -26,7 +26,7 @@ This project uses a combination of Ansible and CloudFormation to provision the A
 2. Export the AWS access key and secret key of an IAM user with full access to provision AWS resources (or set as the default profile in `~/.aws/credentials`)
 
 3. Create an initial environment file named `environ-dev` to configure the MySQL password and app environment:  
-`echo "APP_ENV=dev
+`echo "APP_ENV=dev  
 MYSQL_ROOT_PASSWORD=demodemo" > environ-dev`
 
 4. Run `ansible-playbook keypair_ecr.yaml` to import the keypair to AWS, provision 4 ECR repositories, and publish the initial environment file to S3
