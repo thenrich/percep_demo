@@ -21,3 +21,31 @@
           InstanceType: "t2.small"
           Tag: "dev"
           AccountId: "625909117766"
+          ECSConfigBucketName: "com.perceptyx.ecs.config"
+      register: stack
+
+    - name: fetch config
+      s3:
+        bucket: com.perceptyx.ecs.config
+        object: environ-dev
+        dest: environ-dev.current
+        mode: get
+
+    - name: append mysql stack output to config
+      lineinfile:
+        path: environ-dev.current
+        regexp: '^MYSQL_CONNECTION_STRING='
+        line: 'MYSQL_CONNECTION_STRING="root:demodemo@tcp({{stack.stack_outputs.MySQLLoadBalancerDNSName}}:3306)/employees"'
+
+    - name: put cluster config
+      s3:
+        bucket: com.perceptyx.ecs.config
+        object: environ-dev
+        src: environ-dev.current
+        mode: put
+
+
+    - name: show stack outputs
+      debug:
+        msg: "Stack outputs: {{stack.stack_outputs}}"
+

@@ -17,7 +17,7 @@ build-web: build-go-builder
 		-e GOOS=linux \
 		-v $(curdir)/web:/app \
 		-w /app \
-		$(prefix)-go-build bash -c "go get -d ./... && go install github.com/thenrich/perceptyx_test"
+		$(prefix)-go-build bash -c "go get -d ./... && go install github.com/thenrich/perceptyx_test github.com/thenrich/perceptyx_test/mysql_check"
 	chmod +x $(curdir)/web/bin/*
 	docker build -t $(prefix)-web -f $(curdir)/etc/dockerfiles/web/Dockerfile .
 
@@ -28,25 +28,25 @@ build-mysql:
 	docker build -t $(prefix)-mysql -f $(curdir)/etc/dockerfiles/mysql/Dockerfile .
 
 build-env-cfg:
-	docker build -t $(prefix)-env-cfg -f $(curdir)/etc/dockerfiles/env-cfg/Dockerfile
+	docker build -t $(prefix)-env-cfg -f $(curdir)/etc/dockerfiles/env-cfg/Dockerfile .
 
 start-mysql:
-	docker run -d --name $(prefix)-mysql -e MYSQL_ROOT_PASSWORD=demodemo $(prefix)-mysql 
+	docker run -d --name $(prefix)-mysql -e MYSQL_ROOT_PASSWORD=demodemo $(prefix)-mysql mysqld
 
 stop-mysql:
-	docker rm -f $(prefix)-mysql
+	docker rm -f $(prefix)-mysql || true
 
 start-web:
-	docker run -d --name $(prefix)-web -p 9090:8080 --link $(prefix)-mysql:mysql -e MYSQL_CONNECTION_STRING="root:demodemo@tcp(mysql:3306)/employees" $(prefix)-web /app/perceptyx_test
+	docker run -d --name $(prefix)-web -p 9090:8080 --link $(prefix)-mysql:mysql -e MYSQL_CONNECTION_STRING="root:demodemo@tcp(mysql:3306)/employees" $(prefix)-web /run.sh
 
 stop-web:
-	docker rm -f $(prefix)-web
+	docker rm -f $(prefix)-web || true
 
 start-nginx:
-	docker run -d --name $(prefix)-nginx -p 8080:80 --link $(prefix)-web:web $(prefix)-nginx nginx -g 'daemon off;'
+	docker run -d --name $(prefix)-nginx -p 8080:80 --link $(prefix)-web:web $(prefix)-nginx /run.sh
 
 stop-nginx:
-	docker rm -f $(prefix)-nginx
+	docker rm -f $(prefix)-nginx || true
 
 push-web: 
 	docker tag $(prefix)-web $(repo_prefix)/$(prefix)/$(prefix)-web:latest
@@ -64,7 +64,7 @@ push-env-cfg:
 	docker tag $(prefix)-env-cfg $(repo_prefix)/$(prefix)/$(prefix)-env-cfg:latest
 	docker push $(repo_prefix)/$(prefix)/$(prefix)-env-cfg:latest
 
-build-all: build-web build-nginx build-mysql
+build-all: build-web build-nginx build-mysql build-env-cfg
 
 push-all: push-web push-nginx push-mysql push-env-cfg
 

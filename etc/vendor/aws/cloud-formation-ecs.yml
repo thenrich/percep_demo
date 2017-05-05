@@ -29,6 +29,9 @@ Parameters:
   Region:
     Type: String
     Description: Target region
+  ECSConfigBucketName:
+    Type: String
+    Description: Name of ECS config bucket
 Mappings:
   AWSRegionToAMI:
     us-east-1:
@@ -67,6 +70,16 @@ Resources:
         "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role",
         "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
       ]
+      Policies: 
+        - 
+          PolicyName: "ecs-start-task"
+          PolicyDocument: 
+            Version: "2012-10-17"
+            Statement: 
+              - 
+                Effect: "Allow"
+                Action: "ecs:StartTask"
+                Resource: !Sub "arn:aws:ecs:${Region}:${AccountId}:task-definition/EnvCfg-${Tag}:*"
       Path: "/"
       RoleName: ecsInstanceRole
 
@@ -110,6 +123,22 @@ Resources:
       Path: "/"
       Roles:
       - !Ref 'PerceptyxECSEC2Role'
+  PerceptyxECSConfigBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    DependsOn: ["PerceptyxECSEC2Role"]
+    Properties:
+      Bucket: !Sub "${ECSConfigBucketName}"
+      PolicyDocument: 
+        Statement: 
+          - 
+            Action: 
+              - "s3:GetObject"
+            Effect: "Allow"
+            Resource: !Sub "arn:aws:s3:::${ECSConfigBucketName}/*"
+            Principal: 
+                AWS: 
+                  - !GetAtt PerceptyxECSEC2Role.Arn
+
   PerceptyxVPC:
     Type: AWS::EC2::VPC
     Properties:
@@ -146,7 +175,7 @@ Resources:
   PerceptyxPrivateSubnet2:
     Type: AWS::EC2::Subnet
     Properties:
-      AvailabilityZone: us-east-1b
+      AvailabilityZone: us-east-1c
       CidrBlock: 10.0.2.0/24
       VpcId:
         Ref: PerceptyxVPC
@@ -252,6 +281,39 @@ Resources:
           ContainerName: nginx
           ContainerPort: 80
 
+
+  PerceptyxMySQLLoadBalancer:
+    Type: AWS::ElasticLoadBalancing::LoadBalancer
+    Properties:
+      LoadBalancerName: mysql-lb
+      Listeners:
+        - InstancePort: 3306
+          InstanceProtocol: TCP
+          LoadBalancerPort: 3306
+          Protocol: TCP
+      Subnets:
+        - !Ref 'PerceptyxPrivateSubnet1'
+        - !Ref 'PerceptyxPrivateSubnet2'
+      Scheme: internal
+      SecurityGroups:
+        - !Ref 'PerceptyxECSVPCSecurityGroup'
+
+
+
+  PerceptyxECSServiceMySQL:
+    Type: AWS::ECS::Service
+    DependsOn: ['PerceptyxMySQLLoadBalancer', 'PerceptyxECSEC2ServiceRole', 'PerceptyxECSClusterASG', 'PerceptyxALBTargetGroup', 'PerceptyxALBListenerHTTP', 'PerceptyxECSTaskDefinitionDB']
+    Properties:
+      Cluster: !Ref 'PerceptyxECSCluster'
+      DesiredCount: 1
+      TaskDefinition: !Ref 'PerceptyxECSTaskDefinitionDB'
+      Role: !Ref 'PerceptyxECSEC2ServiceRole'
+      LoadBalancers:
+        -
+          LoadBalancerName: mysql-lb
+          ContainerName: mysql
+          ContainerPort: 3306
+
   PerceptyxEnvCfgTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
@@ -273,6 +335,46 @@ Resources:
           Host:
             SourcePath: /etc/app_config
           Name: app-config
+
+  PerceptyxECSTaskDefinitionDB:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      ContainerDefinitions:
+        -
+          Name: mysql
+          Image: !Sub ${AccountId}.dkr.ecr.${Region}.amazonaws.com/perceptyx/perceptyx-mysql:latest
+          MemoryReservation: 512
+          PortMappings:
+            - ContainerPort: 3306
+              HostPort: 3306
+          MountPoints:
+            -
+              SourceVolume: ecs-logs-mysql
+              ContainerPath: /var/log/mysql
+            -
+              SourceVolume: ecs-mysql
+              ContainerPath: /var/lib/mysql
+            -
+              SourceVolume: app-config
+              ContainerPath: /etc/app_config
+              ReadOnly: true
+          Command:
+            - mysqld
+      Family: !Sub MySQL-${Tag}
+      Volumes:
+        -
+          Host:
+            SourcePath: /etc/app_config
+          Name: app-config
+        -
+          Host:
+            SourcePath: /var/log/mysql
+          Name: ecs-logs-mysql
+        -
+          Host:
+            SourcePath: /var/lib/mysql
+          Name: ecs-mysql
+
 
   PerceptyxECSTaskDefinitionWeb:
     Type: AWS::ECS::TaskDefinition
@@ -344,6 +446,7 @@ Resources:
 
   PerceptyxECSClusterLaunchConfiguration:
     Type: AWS::AutoScaling::LaunchConfiguration
+    DependsOn: 'PerceptyxECSEC2Role'
     Properties:
       ImageId: !FindInMap [AWSRegionToAMI, !Ref 'AWS::Region', AMIID]
       SecurityGroups: [ !Ref 'PerceptyxECSPublicSecurityGroup' , !Ref 'PerceptyxECSVPCSecurityGroup' ]
@@ -370,9 +473,8 @@ Resources:
             # Write the cluster configuration variable to the ecs.config file
             # (add any other configuration variables here also)
             mkdir /etc/app_config
-            # Fetch dockercfg from S3 and configure ecs.config
-            aws s3 cp s3://com.perceptypx.docker.config/dockercfg /etc/dockercfg
-            aws s3 cp s3://com.perceptypx.docker.config/environ-${EnvironmentConfigName} /etc/app_config/environment
+            # Fetch from S3 and configure ecs.config
+            aws s3 cp s3://com.perceptyx.ecs.config/environ-${EnvironmentConfigName} /etc/app_config/environment
             echo ECS_CLUSTER=$cluster >> /etc/ecs/ecs.config
             echo ECS_ENGINE_AUTH_TYPE=dockercfg >> /etc/ecs/ecs.config
             echo ECS_ENGINE_AUTH_DATA=$(cat /etc/dockercfg) >> /etc/ecs/ecs.config
@@ -450,7 +552,7 @@ Resources:
       ResourceId: !Sub
         - service/${ClusterName}/${ServiceName}
         - { ClusterName: !Sub "Perceptyx-ecs-cluster-${Tag}", ServiceName: !GetAtt PerceptyxECSServiceWeb.Name }
-      RoleARN: arn:aws:iam::${AccountId}:role/ecsAutoscaleRole
+      RoleARN: !GetAtt PerceptyxECSAutoscaleRole.Arn
       ScalableDimension: ecs:service:DesiredCount
       ServiceNamespace: ecs
 
@@ -473,4 +575,13 @@ Resources:
             ScalingAdjustment: 1
 
 
-Outputs: {}
+
+Outputs:
+  MySQLLoadBalancerDNSName:
+    Description: The DNSName of MySQL load balancer
+    Value: !GetAtt PerceptyxMySQLLoadBalancer.DNSName
+
+  PublicLoadBalancerDNSName:
+    Description: The DNSName of the public facing load balancer
+    Value: !GetAtt PerceptyxALB.DNSName
+

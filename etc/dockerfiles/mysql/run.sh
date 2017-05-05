@@ -1,4 +1,4 @@
 #!/bin/bash
 
 . /common.sh
-nginx -g 'daemon off;'
+/usr/sbin/mysqld

@@ -31,6 +31,7 @@ func mainHandler(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query(q, "M", "1965-02-01", "1990-01-01")
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Query error: %s", err.Error()), http.StatusInternalServerError)
+		return
 	}
 
 	defer rows.Close()
