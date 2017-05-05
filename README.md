@@ -23,7 +23,7 @@ This project uses a combination of Ansible and CloudFormation to provision the A
 
 1. Enter the `ansible` directory and create an SSH keypair. The name of the key is important -- if it's changed, update `keypair_ecf.yaml` to match: `cd ansible && ssh-keygen -t rsa -b 4096 -f perceptyx_rsa`
 
-2. Export the AWS access key and secret key of an IAM user with full access to provision AWS resources (or set as the default profile in `~/.aws/credentials`)
+2. Export the AWS access key and secret key of an IAM user (`export AWS_ACCESS_KEY_ID=xx && export AWS_SECRET_ACCESS_KEY=xx`) with full access to provision AWS resources (or set as the default profile in `~/.aws/credentials`)
 
 3. Create an initial environment file named `environ-dev` to configure the MySQL password and app environment:  
 ```
